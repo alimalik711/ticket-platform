@@ -12,6 +12,18 @@ const environmentSchema = z.object({
     .min(1)
     .max(65535)
     .default(4000),
+
+
+    DATABASE_URL: z
+    .string()
+    .regex(
+      /^postgres(?:ql)?:\/\//,
+      "DATABASE_URL must be a PostgreSQL connection URL",
+    ),
+
+    BETTER_AUTH_SECRET: z.string().min(32),
+
+    BETTER_AUTH_URL: z.string().url(),
 });
 
 const result = environmentSchema.safeParse(process.env);

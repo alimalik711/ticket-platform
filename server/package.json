@@ -6,7 +6,8 @@
     "dev": "tsx watch src/server.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "migrate": "node-pg-migrate -j ts"
   },
   "keywords": [],
   "author": "",
@@ -14,12 +15,16 @@
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^22.20.1",
+    "@types/pg": "^8.20.4",
+    "node-pg-migrate": "^9.0.0",
     "tsx": "^4.23.5",
     "typescript": "^7.0.2"
   },
   "dependencies": {
+    "better-auth": "^1.6.26",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "pg": "^8.22.0",
     "zod": "^4.4.3"
   },
   "type": "module",
