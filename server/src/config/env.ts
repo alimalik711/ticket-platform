@@ -31,6 +31,19 @@ const environmentSchema = z.object({
     /^rediss?:\/\//,
     "REDIS_URL must be a Redis connection URL",
   ),
+
+  RESERVATION_RATE_LIMIT_MAX: z.coerce
+  .number()
+  .int()
+  .positive()
+  .default(5),
+
+RESERVATION_RATE_LIMIT_WINDOW_SECONDS: z.coerce
+  .number()
+  .int()
+  .positive()
+  .default(60),
+  
 });
 
 const result = environmentSchema.safeParse(process.env);
