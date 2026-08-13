@@ -7,7 +7,10 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc",
     "start": "node dist/server.js",
-    "migrate": "node-pg-migrate -j ts"
+    "migrate": "node-pg-migrate -j ts",
+    "worker:dev": "tsx watch src/workers/reservation-expiration.worker.ts",
+    "worker": "tsx src/workers/reservation-expiration.worker.ts"
+    
   },
   "keywords": [],
   "author": "",
@@ -22,8 +25,10 @@
   },
   "dependencies": {
     "better-auth": "^1.6.26",
+    "bullmq": "^6.1.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "ioredis": "^6.0.0",
     "pg": "^8.22.0",
     "zod": "^4.4.3"
   },

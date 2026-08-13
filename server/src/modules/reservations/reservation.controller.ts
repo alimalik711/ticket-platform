@@ -1,9 +1,17 @@
 import type { RequestHandler } from "express";
-import { createReservation as createReservationInDatabase } from "./reservation.service.js";
+
+import {
+  createReservation as createReservationInDatabase,
+} from "./reservation.service.js";
+
 import {
   createReservationSchema,
   idempotencyKeySchema,
 } from "./reservation.schema.js";
+
+import {
+  scheduleReservationExpiration,
+} from "../../queues/reservation-expiration.queue.js";
 
 const createReservation: RequestHandler = async (
   request,
@@ -11,23 +19,24 @@ const createReservation: RequestHandler = async (
   next,
 ) => {
   try {
-    const parsedBody = createReservationSchema.safeParse(
-      request.body,
-    );
+    const parsedBody =
+      createReservationSchema.safeParse(request.body);
 
     if (!parsedBody.success) {
       response.status(400).json({
         status: "error",
-        message: "Request body must contain only a valid seatId",
+        message:
+          "Request body must contain only a valid seatId",
         issues: parsedBody.error.issues,
       });
 
       return;
     }
 
-    const parsedIdempotencyKey = idempotencyKeySchema.safeParse(
-      request.get("Idempotency-Key"),
-    );
+    const parsedIdempotencyKey =
+      idempotencyKeySchema.safeParse(
+        request.get("Idempotency-Key"),
+      );
 
     if (!parsedIdempotencyKey.success) {
       response.status(400).json({
@@ -41,18 +50,21 @@ const createReservation: RequestHandler = async (
 
     const userId = response.locals.user.id;
     const { seatId } = parsedBody.data;
-    const idempotencyKey = parsedIdempotencyKey.data;
+    const idempotencyKey =
+      parsedIdempotencyKey.data;
 
-    const result = await createReservationInDatabase(
-      seatId,
-      userId,
-      idempotencyKey,
-    );
+    const result =
+      await createReservationInDatabase(
+        seatId,
+        userId,
+        idempotencyKey,
+      );
 
     if (result.kind === "seat_not_found") {
       response.status(404).json({
         status: "error",
-        message: "Available published seat not found",
+        message:
+          "Available published seat not found",
       });
 
       return;
@@ -67,7 +79,9 @@ const createReservation: RequestHandler = async (
       return;
     }
 
-    if (result.kind === "idempotency_key_reused") {
+    if (
+      result.kind === "idempotency_key_reused"
+    ) {
       response.status(409).json({
         status: "error",
         message:
@@ -78,6 +92,11 @@ const createReservation: RequestHandler = async (
     }
 
     if (result.kind === "idempotent_replay") {
+      await scheduleReservationExpiration(
+        result.reservation.id,
+        result.reservation.expires_at,
+      );
+
       response.status(200).json({
         status: "success",
         data: {
@@ -88,6 +107,11 @@ const createReservation: RequestHandler = async (
 
       return;
     }
+
+    await scheduleReservationExpiration(
+      result.reservation.id,
+      result.reservation.expires_at,
+    );
 
     response.status(201).json({
       status: "success",

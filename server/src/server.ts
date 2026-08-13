@@ -1,12 +1,19 @@
 import { app } from "./app.js";
 import { env } from "./config/env.js";
 import { pool } from "./db/pool.js";
+import { redis } from "./redis/client.js";
 
 const startServer = async () => {
   try {
     await pool.query("SELECT 1");
 
     console.log("PostgreSQL connection successful");
+
+    
+
+const redisResponse = await redis.ping();
+
+console.log(`Redis connection successful: ${redisResponse}`);
 
     app.listen(env.PORT, () => {
       console.log(
