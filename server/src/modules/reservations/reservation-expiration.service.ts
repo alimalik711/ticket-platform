@@ -1,8 +1,15 @@
 import { pool } from "../../db/pool.js";
 
+type ReservationStatus =
+  | "HELD"
+  | "CONFIRMED"
+  | "EXPIRED"
+  | "CANCELLED";
+
 type ReservationForExpirationRow = {
   seat_id: string;
-  status: string;
+  event_id: string;
+  status: ReservationStatus;
   is_due: boolean;
 };
 
@@ -11,13 +18,14 @@ type ExpirationResult =
       kind: "expired";
       reservationId: string;
       seatId: string;
+      eventId: string;
     }
   | {
       kind: "not_found";
     }
   | {
       kind: "already_processed";
-      status: string;
+      status: ReservationStatus;
     }
   | {
       kind: "not_due";
@@ -35,12 +43,16 @@ const expireReservation = async (
       await client.query<ReservationForExpirationRow>(
         `
           SELECT
-            seat_id,
-            status,
-            expires_at <= CURRENT_TIMESTAMP AS is_due
+            reservations.seat_id,
+            seats.event_id,
+            reservations.status,
+            reservations.expires_at
+              <= CURRENT_TIMESTAMP AS is_due
           FROM reservations
-          WHERE id = $1
-          FOR UPDATE
+          INNER JOIN seats
+            ON seats.id = reservations.seat_id
+          WHERE reservations.id = $1
+          FOR UPDATE OF reservations
         `,
         [reservationId],
       );
@@ -73,32 +85,46 @@ const expireReservation = async (
       };
     }
 
-    await client.query(
-      `
-        UPDATE reservations
-        SET
-          status = 'EXPIRED',
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = $1
-          AND status = 'HELD'
-          AND expires_at <= CURRENT_TIMESTAMP
-      `,
-      [reservationId],
-    );
+    const reservationUpdateResult =
+      await client.query(
+        `
+          UPDATE reservations
+          SET
+            status = 'EXPIRED',
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = $1
+            AND status = 'HELD'
+            AND expires_at <= CURRENT_TIMESTAMP
+        `,
+        [reservationId],
+      );
 
-    await client.query(
-      `
-        UPDATE seats
-        SET
-          status = 'AVAILABLE',
-          held_until = NULL,
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = $1
-          AND status = 'HELD'
-          AND held_until <= CURRENT_TIMESTAMP
-      `,
-      [reservation.seat_id],
-    );
+    if (reservationUpdateResult.rowCount !== 1) {
+      throw new Error(
+        "Expected exactly one reservation to expire",
+      );
+    }
+
+    const seatUpdateResult =
+      await client.query(
+        `
+          UPDATE seats
+          SET
+            status = 'AVAILABLE',
+            held_until = NULL,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = $1
+            AND status = 'HELD'
+            AND held_until <= CURRENT_TIMESTAMP
+        `,
+        [reservation.seat_id],
+      );
+
+    if (seatUpdateResult.rowCount !== 1) {
+      throw new Error(
+        "Expected exactly one held seat to be released",
+      );
+    }
 
     await client.query("COMMIT");
 
@@ -106,6 +132,7 @@ const expireReservation = async (
       kind: "expired",
       reservationId,
       seatId: reservation.seat_id,
+      eventId: reservation.event_id,
     };
   } catch (error) {
     await client.query("ROLLBACK");

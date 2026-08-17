@@ -43,7 +43,12 @@ RESERVATION_RATE_LIMIT_WINDOW_SECONDS: z.coerce
   .int()
   .positive()
   .default(60),
-  
+
+  EVENT_SEATS_CACHE_TTL_SECONDS: z.coerce
+  .number()
+  .int()
+  .positive()
+  .default(15),
 });
 
 const result = environmentSchema.safeParse(process.env);

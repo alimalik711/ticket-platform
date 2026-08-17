@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+
 import { pool } from "../../db/pool.js";
 
 type ReservationRow = {
@@ -6,7 +7,11 @@ type ReservationRow = {
   seat_id: string;
   user_id: string;
   price_cents: number;
-  status: "HELD" | "CONFIRMED" | "EXPIRED" | "CANCELLED";
+  status:
+    | "HELD"
+    | "CONFIRMED"
+    | "EXPIRED"
+    | "CANCELLED";
   expires_at: Date;
   confirmed_at: Date | null;
   idempotency_key: string | null;
@@ -14,10 +19,18 @@ type ReservationRow = {
   updated_at: Date;
 };
 
+type SeatForReservationRow = {
+  id: string;
+  event_id: string;
+  price_cents: number;
+  status: "AVAILABLE" | "HELD" | "SOLD";
+};
+
 type CreateReservationResult =
   | {
       kind: "created";
       reservation: ReservationRow;
+      eventId: string;
     }
   | {
       kind: "idempotent_replay";
@@ -38,25 +51,26 @@ const findReservationByIdempotencyKey = async (
   userId: string,
   idempotencyKey: string,
 ): Promise<ReservationRow | undefined> => {
-  const result = await client.query<ReservationRow>(
-    `
-      SELECT
-        id,
-        seat_id,
-        user_id,
-        price_cents,
-        status,
-        expires_at,
-        confirmed_at,
-        idempotency_key,
-        created_at,
-        updated_at
-      FROM reservations
-      WHERE user_id = $1
-        AND idempotency_key = $2
-    `,
-    [userId, idempotencyKey],
-  );
+  const result =
+    await client.query<ReservationRow>(
+      `
+        SELECT
+          id,
+          seat_id,
+          user_id,
+          price_cents,
+          status,
+          expires_at,
+          confirmed_at,
+          idempotency_key,
+          created_at,
+          updated_at
+        FROM reservations
+        WHERE user_id = $1
+          AND idempotency_key = $2
+      `,
+      [userId, idempotencyKey],
+    );
 
   return result.rows[0];
 };
@@ -68,7 +82,8 @@ const isUniqueViolation = (
     typeof error === "object" &&
     error !== null &&
     "code" in error &&
-    (error as { code?: unknown }).code === "23505"
+    (error as { code?: unknown }).code ===
+      "23505"
   );
 };
 
@@ -92,7 +107,9 @@ const createReservation = async (
     if (existingReservation) {
       await client.query("ROLLBACK");
 
-      if (existingReservation.seat_id !== seatId) {
+      if (
+        existingReservation.seat_id !== seatId
+      ) {
         return {
           kind: "idempotency_key_reused",
         };
@@ -104,25 +121,23 @@ const createReservation = async (
       };
     }
 
-    const seatResult = await client.query<{
-      id: string;
-      price_cents: number;
-      status: "AVAILABLE" | "HELD" | "SOLD";
-    }>(
-      `
-        SELECT
-          seats.id,
-          seats.price_cents,
-          seats.status
-        FROM seats
-        INNER JOIN events
-          ON events.id = seats.event_id
-        WHERE seats.id = $1
-          AND events.status = 'PUBLISHED'
-        FOR UPDATE OF seats
-      `,
-      [seatId],
-    );
+    const seatResult =
+      await client.query<SeatForReservationRow>(
+        `
+          SELECT
+            seats.id,
+            seats.event_id,
+            seats.price_cents,
+            seats.status
+          FROM seats
+          INNER JOIN events
+            ON events.id = seats.event_id
+          WHERE seats.id = $1
+            AND events.status = 'PUBLISHED'
+          FOR UPDATE OF seats
+        `,
+        [seatId],
+      );
 
     const seat = seatResult.rows[0];
 
@@ -145,7 +160,10 @@ const createReservation = async (
       await client.query("ROLLBACK");
 
       if (reservationAfterWaiting) {
-        if (reservationAfterWaiting.seat_id !== seatId) {
+        if (
+          reservationAfterWaiting.seat_id !==
+          seatId
+        ) {
           return {
             kind: "idempotency_key_reused",
           };
@@ -153,7 +171,8 @@ const createReservation = async (
 
         return {
           kind: "idempotent_replay",
-          reservation: reservationAfterWaiting,
+          reservation:
+            reservationAfterWaiting,
         };
       }
 
@@ -178,38 +197,40 @@ const createReservation = async (
       [seatId, expiresAt],
     );
 
-    const reservationResult = await client.query<ReservationRow>(
-      `
-        INSERT INTO reservations (
-          seat_id,
-          user_id,
-          price_cents,
-          expires_at,
-          idempotency_key
-        )
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING
-          id,
-          seat_id,
-          user_id,
-          price_cents,
-          status,
-          expires_at,
-          confirmed_at,
-          idempotency_key,
-          created_at,
-          updated_at
-      `,
-      [
-        seatId,
-        userId,
-        seat.price_cents,
-        expiresAt,
-        idempotencyKey,
-      ],
-    );
+    const reservationResult =
+      await client.query<ReservationRow>(
+        `
+          INSERT INTO reservations (
+            seat_id,
+            user_id,
+            price_cents,
+            expires_at,
+            idempotency_key
+          )
+          VALUES ($1, $2, $3, $4, $5)
+          RETURNING
+            id,
+            seat_id,
+            user_id,
+            price_cents,
+            status,
+            expires_at,
+            confirmed_at,
+            idempotency_key,
+            created_at,
+            updated_at
+        `,
+        [
+          seatId,
+          userId,
+          seat.price_cents,
+          expiresAt,
+          idempotencyKey,
+        ],
+      );
 
-    const reservation = reservationResult.rows[0];
+    const reservation =
+      reservationResult.rows[0];
 
     if (!reservation) {
       throw new Error(
@@ -222,6 +243,7 @@ const createReservation = async (
     return {
       kind: "created",
       reservation,
+      eventId: seat.event_id,
     };
   } catch (error) {
     await client.query("ROLLBACK");
@@ -235,7 +257,10 @@ const createReservation = async (
         );
 
       if (existingReservation) {
-        if (existingReservation.seat_id !== seatId) {
+        if (
+          existingReservation.seat_id !==
+          seatId
+        ) {
           return {
             kind: "idempotency_key_reused",
           };

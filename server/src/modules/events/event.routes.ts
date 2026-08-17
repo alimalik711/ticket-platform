@@ -8,7 +8,9 @@ import {
 
 const eventRouter = Router();
 
-eventRouter.get("/", getPublishedEvents);
+eventRouter.get("/",
+  getPublishedEvents
+  );
 
 eventRouter.get(
   "/:eventId/seats",

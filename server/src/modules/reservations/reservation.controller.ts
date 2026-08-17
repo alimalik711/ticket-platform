@@ -1,8 +1,12 @@
 import type { RequestHandler } from "express";
 
 import {
-  createReservation as createReservationInDatabase,
-} from "./reservation.service.js";
+  invalidateEventSeatsCache,
+} from "../../cache/event-seats.cache.js";
+
+import {
+  scheduleReservationExpiration,
+} from "../../queues/reservation-expiration.queue.js";
 
 import {
   createReservationSchema,
@@ -10,8 +14,8 @@ import {
 } from "./reservation.schema.js";
 
 import {
-  scheduleReservationExpiration,
-} from "../../queues/reservation-expiration.queue.js";
+  createReservation as createReservationInDatabase,
+} from "./reservation.service.js";
 
 const createReservation: RequestHandler = async (
   request,
@@ -20,7 +24,9 @@ const createReservation: RequestHandler = async (
 ) => {
   try {
     const parsedBody =
-      createReservationSchema.safeParse(request.body);
+      createReservationSchema.safeParse(
+        request.body,
+      );
 
     if (!parsedBody.success) {
       response.status(400).json({
@@ -49,7 +55,9 @@ const createReservation: RequestHandler = async (
     }
 
     const userId = response.locals.user.id;
+
     const { seatId } = parsedBody.data;
+
     const idempotencyKey =
       parsedIdempotencyKey.data;
 
@@ -73,14 +81,16 @@ const createReservation: RequestHandler = async (
     if (result.kind === "seat_unavailable") {
       response.status(409).json({
         status: "error",
-        message: "Seat is no longer available",
+        message:
+          "Seat is no longer available",
       });
 
       return;
     }
 
     if (
-      result.kind === "idempotency_key_reused"
+      result.kind ===
+      "idempotency_key_reused"
     ) {
       response.status(409).json({
         status: "error",
@@ -91,7 +101,9 @@ const createReservation: RequestHandler = async (
       return;
     }
 
-    if (result.kind === "idempotent_replay") {
+    if (
+      result.kind === "idempotent_replay"
+    ) {
       await scheduleReservationExpiration(
         result.reservation.id,
         result.reservation.expires_at,
@@ -100,13 +112,18 @@ const createReservation: RequestHandler = async (
       response.status(200).json({
         status: "success",
         data: {
-          reservation: result.reservation,
+          reservation:
+            result.reservation,
           idempotentReplay: true,
         },
       });
 
       return;
     }
+
+    await invalidateEventSeatsCache(
+      result.eventId,
+    );
 
     await scheduleReservationExpiration(
       result.reservation.id,

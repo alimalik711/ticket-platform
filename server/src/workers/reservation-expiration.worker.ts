@@ -1,22 +1,27 @@
 import {
-  Job,
   Worker,
 } from "bullmq";
 
-import { redis } from "../redis/client.js";
+import type {
+  Job,
+} from "bullmq";
+
+import { pool } from "../db/pool.js";
+
+import {
+  invalidateEventSeatsCache,
+} from "../cache/event-seats.cache.js";
 
 import {
   type ExpireReservationJobData,
 } from "../queues/reservation-expiration.queue.js";
 
+import { redis } from "../redis/client.js";
+
 import {
   expireReservation,
   type ExpirationResult,
 } from "../modules/reservations/reservation-expiration.service.js";
-
-
-import { pool } from "../db/pool.js";
-
 
 const workerRedis = redis.duplicate({
   maxRetriesPerRequest: null,
@@ -34,6 +39,16 @@ const processExpirationJob = async (
   const result = await expireReservation(
     job.data.reservationId,
   );
+
+  /*
+   * Only invalidate the cache when PostgreSQL
+   * actually changed the seat from HELD to AVAILABLE.
+   */
+  if (result.kind === "expired") {
+    await invalidateEventSeatsCache(
+      result.eventId,
+    );
+  }
 
   console.log("Expiration job processed", {
     jobId: job.id,
@@ -94,7 +109,6 @@ console.log(
   "Reservation expiration worker is running",
 );
 
-
 let isShuttingDown = false;
 
 const shutdown = async (
@@ -111,13 +125,26 @@ const shutdown = async (
   );
 
   try {
-    // Stop accepting new jobs and wait for active jobs.
+    /*
+     * Stop accepting jobs and wait for currently
+     * executing jobs to finish.
+     */
     await reservationExpirationWorker.close();
 
-    // Close the worker's Redis connection.
+    /*
+     * Close the dedicated BullMQ Redis connection.
+     */
     await workerRedis.quit();
 
-    // Close all PostgreSQL pool connections.
+    /*
+     * invalidateEventSeatsCache uses the shared Redis
+     * client, so close that connection as well.
+     */
+    await redis.quit();
+
+    /*
+     * Close every PostgreSQL connection in the pool.
+     */
     await pool.end();
 
     console.log(
