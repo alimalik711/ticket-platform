@@ -49,6 +49,38 @@ RESERVATION_RATE_LIMIT_WINDOW_SECONDS: z.coerce
   .int()
   .positive()
   .default(15),
+
+  STRIPE_SECRET_KEY: z
+  .string()
+  .min(
+    1,
+    "STRIPE_SECRET_KEY is required",
+  ),
+
+STRIPE_API_HOST: z
+  .string()
+  .min(1)
+  .default("api.stripe.com"),
+
+STRIPE_API_PORT: z.coerce
+  .number()
+  .int()
+  .min(1)
+  .max(65535)
+  .default(443),
+
+STRIPE_API_PROTOCOL: z
+  .enum(["http", "https"])
+  .default("https"),
+
+
+STRIPE_WEBHOOK_SECRET: z
+  .string()
+  .min(
+    1,
+    "STRIPE_WEBHOOK_SECRET is required",
+  ),
+  
 });
 
 const result = environmentSchema.safeParse(process.env);

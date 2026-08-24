@@ -6,22 +6,26 @@ import type {
   Job,
 } from "bullmq";
 
-import { pool } from "../db/pool.js";
-
 import {
   invalidateEventSeatsCache,
 } from "../cache/event-seats.cache.js";
+
+import { pool } from "../db/pool.js";
+
+import {
+  cancelPaymentForExpiredReservation,
+} from "../modules/payment/payment.service.js";
+
+import {
+  expireReservation,
+  type ExpirationResult,
+} from "../modules/reservations/reservation-expiration.service.js";
 
 import {
   type ExpireReservationJobData,
 } from "../queues/reservation-expiration.queue.js";
 
 import { redis } from "../redis/client.js";
-
-import {
-  expireReservation,
-  type ExpirationResult,
-} from "../modules/reservations/reservation-expiration.service.js";
 
 const workerRedis = redis.duplicate({
   maxRetriesPerRequest: null,
@@ -32,31 +36,74 @@ const processExpirationJob = async (
 ): Promise<ExpirationResult> => {
   console.log("Processing expiration job", {
     jobId: job.id,
-    reservationId: job.data.reservationId,
+    reservationId:
+      job.data.reservationId,
     attempt: job.attemptsMade + 1,
   });
 
-  const result = await expireReservation(
-    job.data.reservationId,
-  );
+  /*
+   * First expire the reservation and release its
+   * seat using a PostgreSQL transaction.
+   */
+  const expirationResult =
+    await expireReservation(
+      job.data.reservationId,
+    );
 
   /*
-   * Only invalidate the cache when PostgreSQL
-   * actually changed the seat from HELD to AVAILABLE.
+   * Invalidate the cached seat list only when
+   * PostgreSQL actually changed the seat from
+   * HELD to AVAILABLE.
    */
-  if (result.kind === "expired") {
+  if (
+    expirationResult.kind === "expired"
+  ) {
     await invalidateEventSeatsCache(
-      result.eventId,
+      expirationResult.eventId,
+    );
+  }
+
+  /*
+   * Handle the payment after the reservation is
+   * confirmed to be expired.
+   *
+   * We also run this for an already-expired
+   * reservation because BullMQ may be retrying
+   * after Stripe cancellation previously failed.
+   */
+  if (
+    expirationResult.kind === "expired" ||
+    (
+      expirationResult.kind ===
+        "already_processed" &&
+      expirationResult.status ===
+        "EXPIRED"
+    )
+  ) {
+    const paymentCancellationResult =
+      await cancelPaymentForExpiredReservation(
+        job.data.reservationId,
+      );
+
+    console.log(
+      "Expired reservation payment handled",
+      {
+        reservationId:
+          job.data.reservationId,
+        result:
+          paymentCancellationResult,
+      },
     );
   }
 
   console.log("Expiration job processed", {
     jobId: job.id,
-    reservationId: job.data.reservationId,
-    result,
+    reservationId:
+      job.data.reservationId,
+    result: expirationResult,
   });
 
-  return result;
+  return expirationResult;
 };
 
 const reservationExpirationWorker =
@@ -75,23 +122,29 @@ const reservationExpirationWorker =
 reservationExpirationWorker.on(
   "completed",
   (job, result) => {
-    console.log("Expiration job completed", {
-      jobId: job.id,
-      result,
-    });
+    console.log(
+      "Expiration job completed",
+      {
+        jobId: job.id,
+        result,
+      },
+    );
   },
 );
 
 reservationExpirationWorker.on(
   "failed",
   (job, error) => {
-    console.error("Expiration job failed", {
-      jobId: job?.id,
-      reservationId:
-        job?.data.reservationId,
-      attempt: job?.attemptsMade,
-      error: error.message,
-    });
+    console.error(
+      "Expiration job failed",
+      {
+        jobId: job?.id,
+        reservationId:
+          job?.data.reservationId,
+        attempt: job?.attemptsMade,
+        error: error.message,
+      },
+    );
   },
 );
 
@@ -132,18 +185,18 @@ const shutdown = async (
     await reservationExpirationWorker.close();
 
     /*
-     * Close the dedicated BullMQ Redis connection.
+     * Close the dedicated BullMQ connection.
      */
     await workerRedis.quit();
 
     /*
-     * invalidateEventSeatsCache uses the shared Redis
-     * client, so close that connection as well.
+     * Close the shared Redis connection used for
+     * cache invalidation.
      */
     await redis.quit();
 
     /*
-     * Close every PostgreSQL connection in the pool.
+     * Close every PostgreSQL pool connection.
      */
     await pool.end();
 

@@ -10,7 +10,6 @@
     "migrate": "node-pg-migrate -j ts",
     "worker:dev": "tsx watch src/workers/reservation-expiration.worker.ts",
     "worker": "tsx src/workers/reservation-expiration.worker.ts"
-    
   },
   "keywords": [],
   "author": "",
@@ -30,6 +29,7 @@
     "express": "^5.2.1",
     "ioredis": "^6.0.0",
     "pg": "^8.22.0",
+    "stripe": "^22.5.0",
     "zod": "^4.4.3"
   },
   "type": "module",
