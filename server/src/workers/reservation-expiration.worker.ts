@@ -25,6 +25,10 @@ import {
   type ExpireReservationJobData,
 } from "../queues/reservation-expiration.queue.js";
 
+import {
+  schedulePaymentRefund,
+} from "../queues/payment-refund.queue.js";
+
 import { redis } from "../redis/client.js";
 
 const workerRedis = redis.duplicate({
@@ -42,8 +46,8 @@ const processExpirationJob = async (
   });
 
   /*
-   * First expire the reservation and release its
-   * seat using a PostgreSQL transaction.
+   * Expire the reservation and release the seat
+   * inside one PostgreSQL transaction.
    */
   const expirationResult =
     await expireReservation(
@@ -51,8 +55,8 @@ const processExpirationJob = async (
     );
 
   /*
-   * Invalidate the cached seat list only when
-   * PostgreSQL actually changed the seat from
+   * Delete the cached seat list only when the
+   * database actually changed the seat from
    * HELD to AVAILABLE.
    */
   if (
@@ -64,12 +68,12 @@ const processExpirationJob = async (
   }
 
   /*
-   * Handle the payment after the reservation is
-   * confirmed to be expired.
+   * Handle the associated payment after the
+   * reservation has been confirmed as expired.
    *
-   * We also run this for an already-expired
-   * reservation because BullMQ may be retrying
-   * after Stripe cancellation previously failed.
+   * already_processed + EXPIRED is included so
+   * BullMQ retries can repeat payment handling
+   * after an earlier Stripe or Redis failure.
    */
   if (
     expirationResult.kind === "expired" ||
@@ -85,11 +89,31 @@ const processExpirationJob = async (
         job.data.reservationId,
       );
 
+    /*
+     * A successful payment cannot be cancelled.
+     * It must be returned through a refund job.
+     */
+    if (
+      paymentCancellationResult.kind ===
+        "refund_required" ||
+      (
+        paymentCancellationResult.kind ===
+          "refund_already_in_progress" &&
+        paymentCancellationResult.status ===
+          "REFUND_PENDING"
+      )
+    ) {
+      await schedulePaymentRefund(
+        paymentCancellationResult.paymentId,
+      );
+    }
+
     console.log(
       "Expired reservation payment handled",
       {
         reservationId:
           job.data.reservationId,
+
         result:
           paymentCancellationResult,
       },
@@ -139,9 +163,13 @@ reservationExpirationWorker.on(
       "Expiration job failed",
       {
         jobId: job?.id,
+
         reservationId:
           job?.data.reservationId,
-        attempt: job?.attemptsMade,
+
+        attempt:
+          job?.attemptsMade,
+
         error: error.message,
       },
     );
@@ -179,24 +207,24 @@ const shutdown = async (
 
   try {
     /*
-     * Stop accepting jobs and wait for currently
-     * executing jobs to finish.
+     * Stop accepting new jobs and wait for active
+     * jobs to finish.
      */
     await reservationExpirationWorker.close();
 
     /*
-     * Close the dedicated BullMQ connection.
+     * Close the BullMQ worker connection.
      */
     await workerRedis.quit();
 
     /*
-     * Close the shared Redis connection used for
-     * cache invalidation.
+     * Close the shared Redis connection used by
+     * cache invalidation and refund scheduling.
      */
     await redis.quit();
 
     /*
-     * Close every PostgreSQL pool connection.
+     * Close this process's PostgreSQL pool.
      */
     await pool.end();
 

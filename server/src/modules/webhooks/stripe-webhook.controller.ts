@@ -5,6 +5,11 @@ import type {
 import type Stripe from "stripe";
 
 import { env } from "../../config/env.js";
+
+import {
+  schedulePaymentRefund,
+} from "../../queues/payment-refund.queue.js";
+
 import { stripe } from "../../stripe/client.js";
 
 import {
@@ -68,6 +73,21 @@ const handleStripeWebhook: RequestHandler =
             paymentIntent.currency,
           );
 
+        /*
+         * A late payment has been recorded as
+         * REFUND_PENDING in PostgreSQL.
+         *
+         * Schedule its actual Stripe refund as a
+         * separate BullMQ job.
+         */
+        if (
+          result.kind === "late_payment"
+        ) {
+          await schedulePaymentRefund(
+            result.paymentId,
+          );
+        }
+
         console.log(
           "Stripe payment success processed",
           {
@@ -128,10 +148,22 @@ const handleStripeWebhook: RequestHandler =
         );
       }
 
+      /*
+       * Stripe receives 200 only after all required
+       * synchronous processing and refund job
+       * scheduling succeeded.
+       */
       response.status(200).json({
         received: true,
       });
     } catch (error) {
+      /*
+       * Redis, PostgreSQL or another internal
+       * failure reaches the Express error handler.
+       *
+       * Stripe receives a failure response and can
+       * retry the webhook later.
+       */
       next(error);
     }
   };

@@ -58,6 +58,10 @@ type PaymentSucceededResult =
   | {
       kind: "late_payment";
       paymentId: string;
+    }
+  | {
+      kind: "refund_already_completed";
+      paymentId: string;
     };
 
 type PaymentFailedResult =
@@ -186,8 +190,33 @@ const processPaymentSucceeded = async (
         stripePaymentIntentId,
       );
 
+    /*
+     * A previous delivery may have committed
+     * REFUND_PENDING but failed while adding the
+     * refund job to Redis.
+     *
+     * Re-read the payment so the repeated webhook
+     * can repair the missing BullMQ job.
+     */
     if (!isNewEvent) {
+      const existingPayment =
+        await findAndLockPayment(
+          client,
+          stripePaymentIntentId,
+        );
+
       await client.query("COMMIT");
+
+      if (
+        existingPayment?.payment_status ===
+        "REFUND_PENDING"
+      ) {
+        return {
+          kind: "late_payment",
+          paymentId:
+            existingPayment.payment_id,
+        };
+      }
 
       return {
         kind: "duplicate_event",
@@ -223,6 +252,10 @@ const processPaymentSucceeded = async (
       );
     }
 
+    /*
+     * A successful payment was already applied to
+     * a valid reservation.
+     */
     if (
       payment.payment_status ===
       "SUCCEEDED"
@@ -235,6 +268,40 @@ const processPaymentSucceeded = async (
       };
     }
 
+    /*
+     * The payment was previously identified as
+     * late. Return late_payment again so the
+     * controller can safely schedule its job.
+     */
+    if (
+      payment.payment_status ===
+      "REFUND_PENDING"
+    ) {
+      await client.query("COMMIT");
+
+      return {
+        kind: "late_payment",
+        paymentId: payment.payment_id,
+      };
+    }
+
+    /*
+     * Never change a completed refund back to
+     * REFUND_PENDING if Stripe sends another
+     * success event for the same PaymentIntent.
+     */
+    if (
+      payment.payment_status ===
+      "REFUNDED"
+    ) {
+      await client.query("COMMIT");
+
+      return {
+        kind: "refund_already_completed",
+        paymentId: payment.payment_id,
+      };
+    }
+
     const reservationIsInvalid =
       payment.reservation_status !==
         "HELD" ||
@@ -243,6 +310,10 @@ const processPaymentSucceeded = async (
     const seatIsInvalid =
       payment.seat_status !== "HELD";
 
+    /*
+     * Stripe received the money, but the
+     * reservation can no longer be fulfilled.
+     */
     if (
       reservationIsInvalid ||
       seatIsInvalid
@@ -274,6 +345,11 @@ const processPaymentSucceeded = async (
       };
     }
 
+    /*
+     * The payment and reservation are valid.
+     * Confirm the payment, reservation and seat
+     * inside the same PostgreSQL transaction.
+     */
     await client.query(
       `
         UPDATE payments
@@ -406,8 +482,7 @@ const processPaymentFailed = async (
     }
 
     /*
-     * These payment states should not return to
-     * FAILED through the normal payment flow.
+     * These states must never return to FAILED.
      */
     if (
       payment.payment_status ===
