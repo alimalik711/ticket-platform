@@ -1,0 +1,51 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    font-feature-settings: "rlig" 1, "calt" 1;
+    color: #0a0a0a;
+    background-color: #ffffff;
+  }
+}
+
+/* Monospace tabular numbers for countdown timers and prices */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Custom minimal scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f5f5f5;
+}
+::-webkit-scrollbar-thumb {
+  background: #d4d4d4;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #a3a3a3;
+}
+
+/* Clean print styles for printable ticket passes */
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+  header, footer, nav, .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+  .ticket-card {
+    border: 2px solid #000000 !important;
+    box-shadow: none !important;
+    page-break-inside: avoid;
+  }
+}

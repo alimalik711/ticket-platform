@@ -10,6 +10,7 @@ import {
 import {
   stripeWebhookRouter,
 } from "./modules/webhooks/stripe-webhook.routes.js";
+import { processPaymentSucceeded } from "./modules/webhooks/stripe-webhook.service.js";
 
 import { errorHandler } from "./middlewares/error-handler.js";
 import {
@@ -45,6 +46,23 @@ app.use(
   "/api/v1/payments",
   paymentRouter,
 );
+
+app.post("/api/v1/dev/simulate-webhook", async (request, response, next) => {
+  try {
+    const { paymentIntentId, amountReceived = 5000, currency = "usd" } = request.body;
+    const stripeEventId = `evt_dev_${Date.now()}`;
+    const result = await processPaymentSucceeded(
+      stripeEventId,
+      "payment_intent.succeeded",
+      paymentIntentId,
+      amountReceived,
+      currency,
+    );
+    response.status(200).json({ status: "success", data: { result } });
+  } catch (error) {
+    next(error);
+  }
+});
 
 app.get("/health", (_request, response) => {
   response.status(200).json({
