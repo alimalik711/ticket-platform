@@ -10,6 +10,10 @@ import {
   invalidateEventSeatsCache,
 } from "../cache/event-seats.cache.js";
 
+import {
+  publishSeatUpdated,
+} from "../realtime/seat-events.js";
+
 import { pool } from "../db/pool.js";
 
 import {
@@ -65,6 +69,19 @@ const processExpirationJob = async (
     await invalidateEventSeatsCache(
       expirationResult.eventId,
     );
+
+    /*
+     * Notify connected clients that the seat
+     * is available again.
+     */
+    await publishSeatUpdated({
+      eventId:
+        expirationResult.eventId,
+      seatId:
+        expirationResult.seatId,
+      status: "AVAILABLE",
+      heldUntil: null,
+    });
   }
 
   /*

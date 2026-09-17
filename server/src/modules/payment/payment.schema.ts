@@ -11,6 +11,15 @@ const createPaymentIntentParamsSchema =
     })
     .strict();
 
+const paymentIdParamsSchema = z
+  .object({
+    id: z
+      .string()
+      .uuid("id must be a valid UUID"),
+  })
+  .strict();
+
 export {
   createPaymentIntentParamsSchema,
+  paymentIdParamsSchema,
 };

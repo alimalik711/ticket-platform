@@ -3,7 +3,15 @@ import type {
   QueryResultRow,
 } from "pg";
 
+import {
+  invalidateEventSeatsCache,
+} from "../../cache/event-seats.cache.js";
+
 import { pool } from "../../db/pool.js";
+
+import {
+  publishSeatUpdated,
+} from "../../realtime/seat-events.js";
 
 type PaymentStatus =
   | "CREATING"
@@ -21,6 +29,8 @@ interface PaymentForWebhookRow
   payment_status: PaymentStatus;
 
   reservation_id: string;
+
+  event_id: string;
 
   reservation_status:
     | "HELD"
@@ -129,6 +139,9 @@ const findAndLockPayment = async (
             AS payment_status,
 
           payments.reservation_id,
+
+          seats.event_id
+            AS event_id,
 
           reservations.status
             AS reservation_status,
@@ -253,8 +266,8 @@ const processPaymentSucceeded = async (
     }
 
     /*
-     * A successful payment was already applied to
-     * a valid reservation.
+     * A successful payment was already applied
+     * to a valid reservation.
      */
     if (
       payment.payment_status ===
@@ -270,8 +283,7 @@ const processPaymentSucceeded = async (
 
     /*
      * The payment was previously identified as
-     * late. Return late_payment again so the
-     * controller can safely schedule its job.
+     * late.
      */
     if (
       payment.payment_status ===
@@ -287,8 +299,7 @@ const processPaymentSucceeded = async (
 
     /*
      * Never change a completed refund back to
-     * REFUND_PENDING if Stripe sends another
-     * success event for the same PaymentIntent.
+     * REFUND_PENDING.
      */
     if (
       payment.payment_status ===
@@ -347,7 +358,8 @@ const processPaymentSucceeded = async (
 
     /*
      * The payment and reservation are valid.
-     * Confirm the payment, reservation and seat
+     *
+     * Confirm payment, reservation and seat
      * inside the same PostgreSQL transaction.
      */
     await client.query(
@@ -407,7 +419,51 @@ const processPaymentSucceeded = async (
       [payment.seat_id],
     );
 
+    /*
+     * IMPORTANT:
+     *
+     * The database transaction must be committed
+     * before we perform Redis operations.
+     */
     await client.query("COMMIT");
+
+    /*
+     * PostgreSQL now permanently says:
+     *
+     * HELD -> SOLD
+     *
+     * The cached seat list may still contain:
+     *
+     * HELD
+     *
+     * Therefore remove the stale cache.
+     */
+    await invalidateEventSeatsCache(
+      payment.event_id,
+    );
+
+    /*
+     * Tell the realtime system about the
+     * confirmed seat change.
+     *
+     * Redis Pub/Sub:
+     *
+     * API
+     *   ↓
+     * Redis channel
+     *   ↓
+     * Redis subscriber
+     *   ↓
+     * Socket.IO
+     *   ↓
+     * event:{eventId}
+     */
+    await publishSeatUpdated({
+      eventId: payment.event_id,
+      seatId: payment.seat_id,
+      status: "SOLD",
+      heldUntil: null,
+    });
 
     return {
       kind: "processed",
@@ -417,7 +473,21 @@ const processPaymentSucceeded = async (
       seatId: payment.seat_id,
     };
   } catch (error) {
-    await client.query("ROLLBACK");
+    /*
+     * Only attempt ROLLBACK while the transaction
+     * is still active.
+     *
+     * PostgreSQL may already have committed if an
+     * error happened during Redis/cache processing.
+     */
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      /*
+       * The transaction may already have been
+       * committed. Ignore rollback failure here.
+       */
+    }
 
     throw error;
   } finally {
@@ -466,8 +536,8 @@ const processPaymentFailed = async (
     }
 
     /*
-     * Webhooks may arrive out of order. Never
-     * downgrade a successful payment to FAILED.
+     * Webhooks may arrive out of order.
+     * Never downgrade a successful payment.
      */
     if (
       payment.payment_status ===
@@ -528,7 +598,11 @@ const processPaymentFailed = async (
       paymentId: payment.payment_id,
     };
   } catch (error) {
-    await client.query("ROLLBACK");
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      // Transaction may already be closed.
+    }
 
     throw error;
   } finally {

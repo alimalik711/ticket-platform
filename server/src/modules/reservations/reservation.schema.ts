@@ -8,7 +8,10 @@ const createReservationSchema = z
 
 const idempotencyKeySchema = z.uuid();
 
+const reservationIdParamSchema = z.uuid();
+
 export {
   createReservationSchema,
   idempotencyKeySchema,
+  reservationIdParamSchema,
 };

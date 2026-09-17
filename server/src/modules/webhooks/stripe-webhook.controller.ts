@@ -74,11 +74,15 @@ const handleStripeWebhook: RequestHandler =
           );
 
         /*
-         * A late payment has been recorded as
-         * REFUND_PENDING in PostgreSQL.
+         * A late payment means Stripe received
+         * the money, but the reservation could no
+         * longer be fulfilled.
          *
-         * Schedule its actual Stripe refund as a
-         * separate BullMQ job.
+         * The service has already changed the
+         * payment to REFUND_PENDING.
+         *
+         * Now schedule the actual refund as a
+         * BullMQ job.
          */
         if (
           result.kind === "late_payment"
@@ -135,6 +139,7 @@ const handleStripeWebhook: RequestHandler =
 
             failureCode,
             failureMessage,
+
             result,
           },
         );
@@ -149,21 +154,17 @@ const handleStripeWebhook: RequestHandler =
       }
 
       /*
-       * Stripe receives 200 only after all required
-       * synchronous processing and refund job
-       * scheduling succeeded.
+       * Only acknowledge the webhook after all
+       * required processing has succeeded.
+       *
+       * If database processing or refund-job
+       * scheduling fails, next(error) is called
+       * instead and Stripe can retry the webhook.
        */
       response.status(200).json({
         received: true,
       });
     } catch (error) {
-      /*
-       * Redis, PostgreSQL or another internal
-       * failure reaches the Express error handler.
-       *
-       * Stripe receives a failure response and can
-       * retry the webhook later.
-       */
       next(error);
     }
   };

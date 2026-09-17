@@ -329,6 +329,37 @@ const findPaymentById = async (
   return result.rows[0];
 };
 
+const getPaymentByIdForUser = async (
+  paymentId: string,
+  userId: string,
+): Promise<PaymentRow | undefined> => {
+  const result = await pool.query<PaymentRow>(
+    `
+      SELECT
+        payments.id,
+        payments.reservation_id,
+        payments.stripe_payment_intent_id,
+        payments.amount_cents,
+        payments.currency,
+        payments.status,
+        payments.failure_code,
+        payments.failure_message,
+        payments.paid_at,
+        payments.refunded_at,
+        payments.created_at,
+        payments.updated_at
+      FROM payments
+      INNER JOIN reservations
+        ON reservations.id = payments.reservation_id
+      WHERE payments.id = $1
+        AND reservations.user_id = $2
+    `,
+    [paymentId, userId],
+  );
+
+  return result.rows[0];
+};
+
 const findPaymentByReservationId = async (
   reservationId: string,
 ): Promise<PaymentRow | undefined> => {
@@ -775,6 +806,7 @@ const createOrReusePaymentIntent =
 export {
   cancelPaymentForExpiredReservation,
   createOrReusePaymentIntent,
+  getPaymentByIdForUser,
   preparePaymentForReservation,
   type CancelExpiredPaymentResult,
   type CreatePaymentIntentResult,

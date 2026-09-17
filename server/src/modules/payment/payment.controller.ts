@@ -4,11 +4,57 @@ import type {
 
 import {
   createPaymentIntentParamsSchema,
+  paymentIdParamsSchema,
 } from "./payment.schema.js";
 
 import {
   createOrReusePaymentIntent,
+  getPaymentByIdForUser,
 } from "./payment.service.js";
+
+const getPayment: RequestHandler = async (
+  request,
+  response,
+  next,
+) => {
+  try {
+    const parsedParams =
+      paymentIdParamsSchema.safeParse(
+        request.params,
+      );
+
+    if (!parsedParams.success) {
+      response.status(400).json({
+        status: "error",
+        message: "id must be a valid UUID",
+        issues: parsedParams.error.issues,
+      });
+
+      return;
+    }
+
+    const payment = await getPaymentByIdForUser(
+      parsedParams.data.id,
+      response.locals.user.id,
+    );
+
+    if (!payment) {
+      response.status(404).json({
+        status: "error",
+        message: "Payment not found",
+      });
+
+      return;
+    }
+
+    response.status(200).json({
+      status: "success",
+      data: { payment },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 
 const createPaymentIntent: RequestHandler =
   async (
@@ -171,4 +217,7 @@ const createPaymentIntent: RequestHandler =
     }
   };
 
-export { createPaymentIntent };
+export {
+  createPaymentIntent,
+  getPayment,
+};
