@@ -31,10 +31,13 @@ export const CheckoutPage: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSuccess, setIsSuccess] = useState(false);
   const [isExpired, setIsExpired] = useState(false);
+  const initInFlight = React.useRef(false);
 
   // Load reservation and create payment intent
   const initCheckout = useCallback(async () => {
     if (!reservationId || !user) return;
+    if (initInFlight.current) return;
+    initInFlight.current = true;
 
     try {
       setIsLoading(true);
@@ -75,6 +78,7 @@ export const CheckoutPage: React.FC = () => {
       setErrorMessage(err.message || "Failed to initialize checkout session.");
     } finally {
       setIsLoading(false);
+      initInFlight.current = false;
     }
   }, [reservationId, user]);
 

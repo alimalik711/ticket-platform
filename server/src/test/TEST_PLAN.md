@@ -40,12 +40,12 @@
 
 ## 5. Reservation Concurrency Tests
 
-* [ ] Two users simultaneously reserve the same seat
-* [ ] Exactly one reservation succeeds
-* [ ] Exactly one request receives the conflict response
-* [ ] Database contains exactly one active reservation
-* [ ] Seat ends in HELD state
-* [ ] No duplicate active reservations are created
+* [x] Two users simultaneously reserve the same seat
+* [x] Exactly one reservation succeeds
+* [x] Exactly one request receives the conflict response
+* [x] Database contains exactly one active reservation
+* [x] Seat ends in HELD state
+* [x] No duplicate active reservations are created
 
 ## 6. Reservation Expiration Tests
 

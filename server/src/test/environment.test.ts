@@ -18,3 +18,5 @@ describe("Test Environment", () => {
     expect(result.rows[0]?.current_database).toBe("ticket_platform_test");
   });
 });
+
+
